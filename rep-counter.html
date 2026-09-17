@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rep Counter — рахунок повторень</title>
+<style>
+  :root{
+    --bg:#f5f5f7; --panel:#ffffff; --text:#111114; --muted:#6b6b74;
+    --accent:#16a34a; --accent2:#2563eb; --danger:#dc2626; --border:#e2e2e6;
+    --counter-bg:#111114; --counter-text:#ffffff;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0e0e11; --panel:#181820; --text:#f2f2f5; --muted:#93939f;
+      --accent:#22c55e; --accent2:#3b82f6; --danger:#ef4444; --border:#2a2a33;
+      --counter-bg:#000000; --counter-text:#ffffff;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e0e11; --panel:#181820; --text:#f2f2f5; --muted:#93939f;
+    --accent:#22c55e; --accent2:#3b82f6; --danger:#ef4444; --border:#2a2a33;
+    --counter-bg:#000000; --counter-text:#ffffff;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex; justify-content:center; padding:16px;
+  }
+  .app{ width:100%; max-width:520px; display:flex; flex-direction:column; gap:14px; }
+  h1{ font-size:19px; margin:4px 0 0; text-align:center; }
+  .sub{ text-align:center; color:var(--muted); font-size:13px; margin-bottom:2px; }
+
+  .exercises{ display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; }
+  .ex-btn{
+    flex:0 0 auto; padding:8px 14px; border-radius:20px; border:1px solid var(--border);
+    background:var(--panel); color:var(--text); font-size:14px; cursor:pointer;
+    white-space:nowrap;
+  }
+  .ex-btn.active{ background:var(--accent); border-color:var(--accent); color:#fff; }
+
+  .stage{
+    position:relative; width:100%; aspect-ratio:9/16; background:#000;
+    border-radius:16px; overflow:hidden; border:1px solid var(--border);
+  }
+  .mirror{ position:absolute; inset:0; transform:scaleX(-1); }
+  video, canvas{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  video{ opacity:0.001; } /* video feeds pose model, drawn overlay comes from canvas */
+
+  .hud{
+    position:absolute; top:10px; left:10px; right:10px; display:flex;
+    justify-content:space-between; align-items:flex-start; pointer-events:none;
+    transform:none;
+  }
+  .badge{
+    background:rgba(0,0,0,0.55); color:#fff; font-size:12px; padding:5px 9px;
+    border-radius:8px; backdrop-filter:blur(4px);
+  }
+  .badge.warn{ background:rgba(220,38,38,0.75); }
+  .counter-wrap{
+    position:absolute; bottom:12px; left:50%; transform:translateX(-50%);
+    background:var(--counter-bg); color:var(--counter-text);
+    padding:8px 26px; border-radius:16px; text-align:center; min-width:120px;
+    box-shadow:0 4px 18px rgba(0,0,0,0.35);
+  }
+  .counter-num{ font-size:44px; font-weight:800; line-height:1; }
+  .counter-label{ font-size:11px; opacity:0.75; letter-spacing:0.5px; text-transform:uppercase; }
+  .counter-wrap.reached{ background:var(--accent); box-shadow:0 4px 22px rgba(34,197,94,0.55); }
+
+  .placeholder{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:10px; color:#aaa; font-size:14px; text-align:center; padding:20px;
+  }
+
+  .controls{ display:flex; gap:10px; }
+  .btn{
+    flex:1; padding:13px; border-radius:12px; border:none; font-size:15px; font-weight:600;
+    cursor:pointer; color:#fff;
+  }
+  .btn.start{ background:var(--accent); }
+  .btn.stop{ background:var(--danger); }
+  .btn.reset{ background:var(--panel); color:var(--text); border:1px solid var(--border); flex:0 0 auto; padding:13px 18px; }
+
+  .stats{ display:flex; gap:10px; }
+  .stat{
+    flex:1; background:var(--panel); border:1px solid var(--border); border-radius:12px;
+    padding:10px; text-align:center;
+  }
+  .stat-val{ font-size:18px; font-weight:700; }
+  .stat-lbl{ font-size:11px; color:var(--muted); margin-top:2px; }
+
+  .note{ font-size:12px; color:var(--muted); text-align:center; line-height:1.5; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>💪 Rep Counter</h1>
+  <div class="sub">Камера рахує повторення в реальному часі</div>
+
+  <div class="exercises" id="exList"></div>
+
+  <div class="stage">
+    <div class="mirror">
+      <video id="video" playsinline autoplay muted></video>
+      <canvas id="canvas"></canvas>
+    </div>
+    <div class="hud">
+      <div class="badge" id="statusBadge">Камеру не увімкнено</div>
+      <div class="badge" id="metricBadge">— °</div>
+    </div>
+    <div class="placeholder" id="placeholder">
+      <div style="font-size:34px;">📷</div>
+      <div>Натисни «Увімкнути камеру», щоб почати. Стань подалі, щоб все тіло (плечі, стегна, коліна, ступні) влізло в кадр.</div>
+    </div>
+    <div class="counter-wrap" id="counterWrap">
+      <div class="counter-num" id="repCount">0</div>
+      <div class="counter-label" id="counterLabel">повторень</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn start" id="toggleBtn">Увімкнути камеру</button>
+    <button class="btn reset" id="resetBtn">Скинути</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-val" id="bestVal">0</div><div class="stat-lbl">Рекорд сесії</div></div>
+    <div class="stat"><div class="stat-val" id="stateVal">—</div><div class="stat-lbl">Фаза руху</div></div>
+  </div>
+
+  <div class="note">Стань так, щоб все тіло було у кадрі, при доброму освітленні. Лічильник спрацьовує на повний цикл руху (наприклад — присів і встав).</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1675466124/drawing_utils.js"></script>
+<script>
+(function(){
+  const EXERCISES = {
+    squat:    { label:'Присідання',          metric:'knee',      low:110, high:160, initial:'up' },
+    pushup:   { label:'Відтискання',         metric:'elbow',     low:100, high:160, initial:'up' },
+    curl:     { label:'Згинання на біцепс',  metric:'elbow',     low:60,  high:150, initial:'up',   target:100 },
+    hammer:   { label:'Молотки',             metric:'elbow',     low:60,  high:150, initial:'up',   target:100 },
+    overhead: { label:'Жим над головою',     metric:'elbow',     low:90,  high:155, initial:'down', target:60 },
+    lateral:  { label:'Жим в сторони',       metric:'armRaise',  low:25,  high:75,  initial:'down', target:60 },
+    front:    { label:'Підйом вперед',       metric:'armRaise',  low:25,  high:75,  initial:'down', target:60 },
+    jack:     { label:'Jumping Jack',        metric:'jack',      low:1.0, high:2.0, initial:'down' },
+  };
+  let currentEx = 'squat';
+
+  const exListEl = document.getElementById('exList');
+  Object.keys(EXERCISES).forEach(key=>{
+    const b = document.createElement('button');
+    b.className = 'ex-btn' + (key===currentEx?' active':'');
+    b.textContent = EXERCISES[key].label;
+    b.dataset.key = key;
+    b.onclick = ()=>{
+      currentEx = key;
+      document.querySelectorAll('.ex-btn').forEach(el=>el.classList.remove('active'));
+      b.classList.add('active');
+      resetCounter();
+    };
+    exListEl.appendChild(b);
+  });
+
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const statusBadge = document.getElementById('statusBadge');
+  const metricBadge = document.getElementById('metricBadge');
+  const placeholder = document.getElementById('placeholder');
+  const repCountEl = document.getElementById('repCount');
+  const counterWrapEl = document.getElementById('counterWrap');
+  const counterLabelEl = document.getElementById('counterLabel');
+  const stateValEl = document.getElementById('stateVal');
+  const bestValEl = document.getElementById('bestVal');
+  const toggleBtn = document.getElementById('toggleBtn');
+  const resetBtn = document.getElementById('resetBtn');
+
+  let running = false;
+  let stream = null;
+  let pose = null;
+  let repCount = 0;
+  let best = 0;
+  let state = 'up';
+  let smoothMetric = null;
+  let rafId = null;
+
+  // --- performance / stability tuning ---
+  let busy = false;              // prevents queueing overlapping pose.send() calls (main cause of lag)
+  let lastSendTime = 0;
+  const DETECT_INTERVAL = 55;    // ms between frames sent to the model (~18 fps — fast enough to catch continuous, non-stop reps)
+  let pendingState = null;       // small debounce: filters single-frame camera/landmark noise, not a "hold the pose" delay
+  let pendingCount = 0;
+  const CONFIRM_FRAMES = 2;      // 2 frames (~110ms) — enough to reject noise/jitter, not enough to feel like a pause
+
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+  try {
+    const saved = localStorage.getItem('rep_counter_best');
+    if(saved) { best = parseInt(saved,10)||0; bestValEl.textContent = best; }
+  } catch(e){}
+
+  function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+
+  function angle3(a,b,c){
+    const ab = {x:a.x-b.x, y:a.y-b.y};
+    const cb = {x:c.x-b.x, y:c.y-b.y};
+    const magAB = Math.hypot(ab.x,ab.y), magCB = Math.hypot(cb.x,cb.y);
+    if(magAB<1e-6 || magCB<1e-6) return null;
+    let cos = (ab.x*cb.x + ab.y*cb.y)/(magAB*magCB);
+    cos = Math.min(1, Math.max(-1, cos));
+    return Math.acos(cos)*180/Math.PI;
+  }
+
+  function vis(lm, idx){ return lm[idx] && lm[idx].visibility != null ? lm[idx].visibility : 0; }
+
+  function kneeAngle(lm){
+    const leftV = Math.min(vis(lm,23),vis(lm,25),vis(lm,27));
+    const rightV = Math.min(vis(lm,24),vis(lm,26),vis(lm,28));
+    if(leftV<0.4 && rightV<0.4) return null;
+    if(leftV >= rightV) return angle3(lm[23], lm[25], lm[27]);
+    return angle3(lm[24], lm[26], lm[28]);
+  }
+
+  function elbowAngle(lm){
+    const leftV = Math.min(vis(lm,11),vis(lm,13),vis(lm,15));
+    const rightV = Math.min(vis(lm,12),vis(lm,14),vis(lm,16));
+    if(leftV<0.4 && rightV<0.4) return null;
+    if(leftV >= rightV) return angle3(lm[11], lm[13], lm[15]);
+    return angle3(lm[12], lm[14], lm[16]);
+  }
+
+  function armRaiseAngle(lm){
+    // angle at the shoulder between the torso line (hip-shoulder) and the upper arm (shoulder-elbow).
+    // ~0-20° = arm hanging at the side, ~80-100° = arm raised to shoulder height (top of lateral/front raise)
+    const leftV = Math.min(vis(lm,23),vis(lm,11),vis(lm,13));
+    const rightV = Math.min(vis(lm,24),vis(lm,12),vis(lm,14));
+    if(leftV<0.4 && rightV<0.4) return null;
+    if(leftV >= rightV) return angle3(lm[23], lm[11], lm[13]);
+    return angle3(lm[24], lm[12], lm[14]);
+  }
+
+  function jackOpenness(lm){
+    if(vis(lm,11)<0.3||vis(lm,12)<0.3||vis(lm,27)<0.3||vis(lm,28)<0.3) return null;
+    const shoulderW = dist(lm[11], lm[12]) || 0.001;
+    const ankleW = dist(lm[27], lm[28]);
+    const shoulderY = (lm[11].y + lm[12].y)/2;
+    const wristY = (lm[15] && lm[16]) ? (lm[15].y + lm[16].y)/2 : shoulderY;
+    const armRaise = Math.max(0, (shoulderY - wristY)) / shoulderW;
+    const legSpread = ankleW / shoulderW;
+    return legSpread + armRaise;
+  }
+
+  function getMetric(lm, type){
+    if(type==='knee') return kneeAngle(lm);
+    if(type==='elbow') return elbowAngle(lm);
+    if(type==='armRaise') return armRaiseAngle(lm);
+    if(type==='jack') return jackOpenness(lm);
+    return null;
+  }
+
+  function resetCounter(){
+    repCount = 0;
+    state = EXERCISES[currentEx].initial;
+    smoothMetric = null;
+    pendingState = null;
+    pendingCount = 0;
+    repCountEl.textContent = '0';
+    stateValEl.textContent = state==='up' ? 'Старт' : 'Закрито';
+    counterWrapEl.classList.remove('reached');
+    const target = EXERCISES[currentEx].target;
+    counterLabelEl.textContent = target ? `повторень · ціль ${target}` : 'повторень';
+  }
+
+  resetBtn.onclick = resetCounter;
+
+  let drawTick = 0;
+
+  function onResults(results){
+    if(canvas.width !== (video.videoWidth||480) || canvas.height !== (video.videoHeight||640)){
+      canvas.width = video.videoWidth || 480;
+      canvas.height = video.videoHeight || 640;
+    }
+    ctx.save();
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    if(results.poseLandmarks){
+      drawTick++;
+      // on mobile, skip drawing the skeleton every other frame to leave more CPU for the pose model itself
+      // (counting logic below still runs on every single frame regardless)
+      if(!isMobile || drawTick % 2 === 0){
+        if(window.drawConnectors && window.POSE_CONNECTIONS){
+          drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, {color:'#22c55e', lineWidth:3});
+        }
+        if(window.drawLandmarks){
+          drawLandmarks(ctx, results.poseLandmarks, {color:'#3b82f6', lineWidth:1, radius:3});
+        }
+      }
+
+      const lm = results.poseLandmarks;
+      const cfg = EXERCISES[currentEx];
+      const raw = getMetric(lm, cfg.metric);
+
+      if(raw != null){
+        metricBadge.classList.remove('warn');
+        smoothMetric = smoothMetric == null ? raw : (smoothMetric*0.4 + raw*0.6);
+        metricBadge.textContent = smoothMetric.toFixed(0) + (cfg.metric==='jack' ? '' : '°');
+
+        let candidate = null;
+        if(state==='up' && smoothMetric < cfg.low) candidate = 'down';
+        else if(state==='down' && smoothMetric > cfg.high) candidate = 'up';
+
+        if(candidate){
+          // require the metric to stay past the threshold for several frames in a row
+          // before we trust it — a single jittery frame can no longer flip the count
+          if(pendingState === candidate){
+            pendingCount++;
+          } else {
+            pendingState = candidate;
+            pendingCount = 1;
+          }
+
+          if(pendingCount >= CONFIRM_FRAMES){
+            state = candidate;
+            pendingState = null;
+            pendingCount = 0;
+            stateValEl.textContent = candidate==='down'
+              ? (cfg.metric==='jack' ? 'Відкрито' : 'Вниз')
+              : (cfg.metric==='jack' ? 'Закрито' : 'Вгору');
+
+            if(candidate === 'up'){
+              repCount++;
+              repCountEl.textContent = repCount;
+              if(repCount > best){
+                best = repCount;
+                bestValEl.textContent = best;
+                try{ localStorage.setItem('rep_counter_best', String(best)); }catch(e){}
+              }
+              const target = EXERCISES[currentEx].target;
+              if(target && repCount === target){
+                counterWrapEl.classList.add('reached');
+                try{ navigator.vibrate && navigator.vibrate([80,40,80]); }catch(e){}
+              }
+            }
+          }
+        } else {
+          pendingState = null;
+          pendingCount = 0;
+        }
+      } else {
+        metricBadge.textContent = 'не видно тіла — стань так, щоб основні суглоби були в кадрі';
+        metricBadge.classList.add('warn');
+        pendingState = null;
+        pendingCount = 0;
+      }
+    } else {
+      metricBadge.textContent = '— °';
+    }
+    ctx.restore();
+  }
+
+  async function detectLoop(){
+    if(!running) return;
+    const now = performance.now();
+    if(!busy && video.readyState >= 2 && (now - lastSendTime) >= DETECT_INTERVAL){
+      busy = true;
+      lastSendTime = now;
+      try{
+        await pose.send({image: video});
+      } catch(e){
+        // ignore transient detection errors, keep the loop alive
+      } finally {
+        busy = false;
+      }
+    }
+    rafId = requestAnimationFrame(detectLoop);
+  }
+
+  async function startCamera(){
+    try{
+      statusBadge.textContent = 'Запуск камери…';
+      stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:{ideal: isMobile?270:360}, height:{ideal: isMobile?480:640} }, audio:false });
+      video.srcObject = stream;
+      await video.play();
+
+      if(!pose){
+        pose = new Pose({
+          locateFile:(file)=> `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+        pose.setOptions({
+          modelComplexity:0,
+          smoothLandmarks:false,
+          enableSegmentation:false,
+          minDetectionConfidence:0.5,
+          minTrackingConfidence:0.5
+        });
+        pose.onResults(onResults);
+      }
+
+      running = true;
+      placeholder.style.display = 'none';
+      statusBadge.textContent = 'Відстеження активне';
+      toggleBtn.textContent = 'Вимкнути камеру';
+      toggleBtn.classList.remove('start');
+      toggleBtn.classList.add('stop');
+      resetCounter();
+      detectLoop();
+    } catch(err){
+      statusBadge.textContent = 'Немає доступу до камери';
+      placeholder.querySelector('div:last-child').textContent = 'Не вдалося отримати доступ до камери. Дозволь доступ у браузері та спробуй ще раз.';
+    }
+  }
+
+  function stopCamera(){
+    running = false;
+    if(rafId) cancelAnimationFrame(rafId);
+    if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+    video.srcObject = null;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    placeholder.style.display = 'flex';
+    placeholder.querySelector('div:last-child').textContent = 'Натисни «Увімкнути камеру», щоб почати';
+    statusBadge.textContent = 'Камеру не увімкнено';
+    metricBadge.textContent = '— °';
+    toggleBtn.textContent = 'Увімкнути камеру';
+    toggleBtn.classList.remove('stop');
+    toggleBtn.classList.add('start');
+  }
+
+  toggleBtn.onclick = ()=>{ running ? stopCamera() : startCamera(); };
+
+  resetCounter();
+})();
+</script>
+</body>
+</html>
